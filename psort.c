@@ -2,6 +2,8 @@
 #include <sys/mman.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 // --------- globals --------- //
 
@@ -10,9 +12,12 @@ struct arg_struct {
   int r;
 };
 
-int arr[] = { 12, 11, 13, 6, 7, 30, 45, 2, 0, 16, 44, 81, 100, 200, 300, 250, 600, 1000 };
+int **arr = NULL;
 
 // --------------------------- //
+
+
+// --------- helper functions --------- //
 
 // merges and sorts two sub-arrays
 void merge(int l, int m, int r) {
@@ -21,7 +26,7 @@ void merge(int l, int m, int r) {
   int n2 = r - m;
 
   /* create temp arrays */
-  int L[n1], R[n2];
+  int *L[n1], *R[n2];
 
   /* Copy data to temp arrays L[] and R[] */
   for (i = 0; i < n1; i++)
@@ -34,7 +39,7 @@ void merge(int l, int m, int r) {
   j = 0; // Initial index of second subarray
   k = l; // Initial index of merged subarray
   while (i < n1 && j < n2) {
-    if (L[i] <= R[j]) {
+    if (*L[i] <= *R[j]) {
       arr[k] = L[i];
       i++;
     }
@@ -74,6 +79,7 @@ void mergeSort(int l, int r) {
   }
 }
 
+// thread execution starting point
 void* parallel_sort(void *arguments) {
   struct arg_struct *fnc_args = arguments;
   mergeSort(fnc_args->l, fnc_args->r);
@@ -81,12 +87,10 @@ void* parallel_sort(void *arguments) {
   pthread_exit(NULL);
 }
 
-void printArray(int A[], int size) {
-  int i;
-  for (i = 0; i < size; i++)
-    printf("%d ", A[i]);
-  printf("\n");
-}
+// ------------------------------------ //
+
+
+// --------- main function --------- //
 
 int main(int argc, char *argv[]) {
   if (argc != 4) {
@@ -94,13 +98,32 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  int arr_size = sizeof(arr) / sizeof(arr[0]); // TODO: sizeof(global_arr) / 100
-  int thread_count = 4; // atoi(argv[3])
+  // set the number of threads to be used
+  int thread_count = atoi(argv[3]);
   pthread_t threads[thread_count];
+
+  // read file size
+  struct stat st;
+  if (stat(argv[1], &st) == -1) {
+    printf("Error: Could not open input file.\n");
+    exit(1);
+  }
+  int size = st.st_size;
+  // count number of records in file
+  int arr_size = size / 100;
   int subarray_size = arr_size / thread_count;
 
-  printf("Given array is \n");
-  printArray(arr, arr_size);
+  // map file into proc addr space and init array
+  int fd = open(argv[1], O_RDONLY, S_IRUSR | S_IWUSR);
+  char *file = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+  arr = malloc(sizeof(int*) * arr_size);
+
+  for (int i = 0, j = 0; i < size; i += 100) {
+    arr[j] = (int*)&file[i];
+    j++;
+  }
+
+  //  IO ends here; parallel sort starts here
 
   // create threads
   for (int i = 0; i < thread_count; i++) {
@@ -130,9 +153,24 @@ int main(int argc, char *argv[]) {
     m += subarray_size; r += subarray_size;
   }
 
-  printf("\nSorted array is \n");
-  printArray(arr, arr_size);
+  //  IO starts here; parallel sort ends here
+
+  // open output file and write to it
+  FILE *output_file = fopen(argv[2], "w");
+  if (output_file == NULL) {
+    printf("Error: Cannot open output file.\n");
+    exit(1);
+  }
+
+  for (int i = 0; i < arr_size; i++) {
+    char *ptr = (char*)arr[i];
+    // copy the next 100 bytes into the output file
+    for (int j = 0; j< 100; j++) {
+      fprintf(output_file, "%c", *(ptr + j));
+    }
+  }
 
   return 0;
 }
 
+// ------------------------------- - //
